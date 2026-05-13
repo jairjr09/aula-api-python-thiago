@@ -1,4 +1,5 @@
-from datetime import timedelta
+from collections import defaultdict
+from datetime import timedelta, datetime
 
 from flask import Flask, jsonify, request
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -26,10 +27,39 @@ class UserSchema(Schema):
     senha = fields.Str(required=True)
     email = fields.Email(required=True)
 
+# Cria lista de tentativas de login erradas
+tentativas_login_falha = defaultdict(list)
+
+# Configurar constantes de proteção contra força bruta
+MAX_TENTATIVAS_LOGIN = 3
+TEMPO_BLOCK_MINUTOS = 1
+
+#Função que verifica se o IP está bloqueado por excesso de tentativas
+def is_blocked(ip):
+    if ip in tentativas_login_falha:
+        tentativas = tentativas_login_falha[ip]
+        #Remover tentativas antigas
+        tentativas = [tentativas for tentativa in tentativas if
+                      datetime.now() - tentativa < timedelta(minutes = TEMPO_BLOCK_MINUTOS)]
+        tentativas_login_falha[ip] = tentativas
+
+
+        # Se o número de tentativas erradas exceder o limite, bloqueia o IP!
+        if len(tentativas) >= MAX_TENTATIVAS_LOGIN:
+            return True # Bloqueado, MANÉ!
+
+    return False
 
 # Cria rota de login
 @app.route('/login', methods=['POST'])
 def login():
+    # Obtém o IP do usuário para verificação
+    ip = request.remote_addr
+
+    # Verifica se o IP está bloqueado
+    if is_blocked(ip):
+        return jsonify({"erro":"Excesso de tentativas erradas. Tente novamente mais tarde"})
+
     # Obtemos as credenciais informadas pelo usuário
     email = request.json.get('email',None)
     senha = request.json.get('senha',None)
@@ -40,6 +70,7 @@ def login():
             access_token = create_access_token(identity=usuario_id)
             return jsonify(access_token=access_token), 200
 
+    tentativas_login_falha[ip].append(datetime.now())
     return jsonify({"erro":"Credenciais inválidas"}), 401
 
 # Rota para pegar usuário por ID
